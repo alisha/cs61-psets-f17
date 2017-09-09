@@ -5,6 +5,13 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include <assert.h>
+#include <limits.h>
+
+struct m61_statistics global = {0, 0, 0, 0, 0, 0, NULL, NULL};
+
+struct metadata {
+    size_t size;
+};
 
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
@@ -14,8 +21,26 @@
 
 void* m61_malloc(size_t sz, const char* file, int line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
-    // Your code here.
-    return base_malloc(sz);
+    if (sz == 0) return NULL;
+
+    void* ptr;
+    if (sz < 0 || sz + sizeof(struct metadata) <= sz || !(ptr = (base_malloc(sz + sizeof(struct metadata))))) {
+        global.nfail++;
+        global.fail_size += sz;
+        return NULL;
+    }
+
+    ((struct metadata*) ptr)->size = sz;
+    global.nactive++;
+    global.active_size += sz;
+    global.ntotal++;
+    global.total_size += sz;
+    if (global.heap_min == NULL || ptr + sizeof(struct metadata) < global.heap_min)
+        global.heap_min = ptr + sizeof(struct metadata);
+    if (global.heap_max == NULL || ptr + sizeof(struct metadata) + sz > global.heap_max)
+        global.heap_max = ptr + sizeof(struct metadata) + sz;
+
+    return ptr + sizeof(struct metadata);
 }
 
 
@@ -27,8 +52,11 @@ void* m61_malloc(size_t sz, const char* file, int line) {
 
 void m61_free(void *ptr, const char *file, int line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
-    // Your code here.
-    base_free(ptr);
+    if (ptr) { 
+        global.nactive--;
+        global.active_size -= ((struct metadata*) (ptr - sizeof(struct metadata)))->size;
+        base_free(ptr - sizeof(struct metadata));
+    }
 }
 
 
@@ -41,13 +69,18 @@ void m61_free(void *ptr, const char *file, int line) {
 
 void* m61_realloc(void* ptr, size_t sz, const char* file, int line) {
     void* new_ptr = NULL;
+    if (ptr == NULL) return m61_malloc(sz, file, line);
+    if (sz == 0) {
+        m61_free(ptr, file, line);
+        return NULL;
+    }
     if (sz) {
         new_ptr = m61_malloc(sz, file, line);
     }
     if (ptr && new_ptr) {
-        // Copy the data from `ptr` into `new_ptr`.
-        // To do that, we must figure out the size of allocation `ptr`.
-        // Your code here (to fix test014).
+        size_t ptr_size = ((struct metadata*) (ptr - sizeof(struct metadata)))->size;
+        int size_to_copy = (sz <= ptr_size) ? sz : ptr_size;
+        memcpy(new_ptr, ptr, size_to_copy);
     }
     m61_free(ptr, file, line);
     return new_ptr;
@@ -62,7 +95,7 @@ void* m61_realloc(void* ptr, size_t sz, const char* file, int line) {
 ///    The allocation request was at location `file`:`line`.
 
 void* m61_calloc(size_t nmemb, size_t sz, const char* file, int line) {
-    // Your code here (to fix test016).
+    if (sz == 0) return NULL;
     void* ptr = m61_malloc(nmemb * sz, file, line);
     if (ptr) {
         memset(ptr, 0, nmemb * sz);
@@ -76,8 +109,7 @@ void* m61_calloc(size_t nmemb, size_t sz, const char* file, int line) {
 
 void m61_getstatistics(struct m61_statistics* stats) {
     // Stub: set all statistics to enormous numbers
-    memset(stats, 255, sizeof(struct m61_statistics));
-    // Your code here.
+    *stats = global;
 }
 
 
